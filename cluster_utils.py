@@ -21,6 +21,7 @@ import xarray as xr
 import zarr
 import pickle
 import cartopy
+import dask
 
 from sklearn.decomposition import PCA
 from sklearn.mixture import GaussianMixture
@@ -79,8 +80,9 @@ def retrieve_profiles(timeRange = slice('1965-01', '1994-12'), levSel=slice(100,
   except:
       pass
 
-  data = dataRaw.sel(lev=levSel, time=timeRange)
-  data = data.where(data.lat < maxLat, drop=True)
+  with dask.config.set(**{'array.slicing.split_large_chunks': True}):
+      data = dataRaw.sel(lev=levSel, time=timeRange)
+      data = data.where(data.lat < maxLat, drop=True)
   #data = data.squeeze()
   if options['raw']:
     return data
@@ -208,6 +210,7 @@ def gmm_classify(data_trans, gmm):
     out = gmm.predict(arr_r)
     out_sizes = np.shape(arr[..., 0])
     out[inds[:, 0]] = -1 #replaces the nan values with -1
+ #   out[inds[:, 0]] = np.nan #replaces the nan values with -1
     out = np.reshape(out, out_sizes)
     return out
 
@@ -446,15 +449,20 @@ def reorder(data_classes, inds):
   
   return result
 
-def modal_classes(data_classes):
+def modal_classes(data_classes,dims=['time',]):
   
-  def func(arr):
-    return sts.mode(arr)[0]
+    def func(arr):
+        return sts.mode(arr)[0]
 
-  return xr.apply_ufunc(
+    if len(dims)>1:
+        data_classes=data_classes.stack(indim=dims)
+    else:
+        data_classes=data_classes.rename({dims[0]:'indim'})
+
+    return xr.apply_ufunc(
         func,
         data_classes,
-        input_core_dims=[['time']],
+        input_core_dims=[['indim']],
         output_core_dims=[[]],
         dask='parallelized',
         output_dtypes=('float64',),
@@ -463,7 +471,6 @@ def modal_classes(data_classes):
           'output_sizes' : {},
           'allow_rechunk' : True
         }
-        
-    )
+        )
   
   
